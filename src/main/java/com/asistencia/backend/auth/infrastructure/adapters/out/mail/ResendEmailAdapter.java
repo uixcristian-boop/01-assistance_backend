@@ -1,51 +1,71 @@
 package com.asistencia.backend.auth.infrastructure.adapters.out.mail;
 
 import com.asistencia.backend.auth.domain.port.out.EmailSenderPort;
-import jakarta.mail.MessagingException;
-import jakarta.mail.internet.MimeMessage;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.mail.javamail.JavaMailSender;
-import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Component;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 
-// Adaptador de correo legado (Gmail SMTP deshabilitado en favor de ResendEmailAdapter por bloqueos de puertos en la nube)
+// Adaptador de correo que implementa EmailSenderPort usando la API REST HTTPS de Resend
 @Slf4j
-// @Component
-@RequiredArgsConstructor
-public class GmailSmtpEmailAdapter implements EmailSenderPort {
+@Component
+public class ResendEmailAdapter implements EmailSenderPort {
 
-    private final JavaMailSender mailSender;
+    @Value("${resend.api.key}")
+    private String apiKey;
 
-    @Value("${spring.mail.username}")
+    @Value("${resend.from.email:UCSS Asistencia <onboarding@resend.dev>}")
     private String fromEmail;
 
-    // Envia correo con credenciales de acceso en formato HTML
+    // Envia correo con credenciales de acceso usando la API HTTP de Resend
     @Override
     public void sendCredentialsEmail(String toEmail, String fullName, String generatedPassword) {
         log.info("CREDENCIALES GENERADAS PARA [{}]: password={}", toEmail, generatedPassword);
+
+        if (apiKey == null || apiKey.trim().isEmpty()) {
+            log.error("No se ha configurado la clave resend.api.key. El correo a {} no sera enviado.", toEmail);
+            return;
+        }
+
         try {
-            MimeMessage mimeMessage = mailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(
-                    mimeMessage,
-                    MimeMessageHelper.MULTIPART_MODE_MIXED_RELATED,
-                    StandardCharsets.UTF_8.name()
-            );
-
-            helper.setFrom(fromEmail);
-            helper.setTo(toEmail);
-            helper.setSubject("Credenciales de Acceso - Sistema de Asistencia UCSS");
-
             String htmlBody = buildCredentialsEmailTemplate(fullName, toEmail, generatedPassword);
-            helper.setText(htmlBody, true);
 
-            mailSender.send(mimeMessage);
-            log.info("Correo de credenciales enviado exitosamente a {}", toEmail);
+            String jsonPayload = "{"
+                    + "\"from\":\"" + escapeJson(fromEmail) + "\","
+                    + "\"to\":[\"" + escapeJson(toEmail) + "\"],"
+                    + "\"subject\":\"Credenciales de Acceso - Sistema de Asistencia UCSS\","
+                    + "\"html\":\"" + escapeJson(htmlBody) + "\""
+                    + "}";
+
+            HttpClient client = HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .build();
+
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create("https://api.resend.com/emails"))
+                    .header("Authorization", "Bearer " + apiKey.trim())
+                    .header("Content-Type", "application/json")
+                    .timeout(Duration.ofSeconds(15))
+                    .POST(HttpRequest.BodyPublishers.ofString(jsonPayload, StandardCharsets.UTF_8))
+                    .build();
+
+            HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+
+            if (response.statusCode() >= 200 && response.statusCode() < 300) {
+                log.info("Correo de credenciales enviado exitosamente a {} via Resend. Respuesta: {}", toEmail, response.body());
+            } else if (response.statusCode() == 403) {
+                log.warn("Resend rechazo el envio a {} (403 Forbidden): {}. Nota: El dominio de prueba de Resend solo envia correos a la cuenta registrada.", toEmail, response.body());
+            } else {
+                log.error("Error al enviar correo via Resend a {}. Codigo HTTP: {}, Respuesta: {}", toEmail, response.statusCode(), response.body());
+            }
         } catch (Exception e) {
-            log.warn("No se pudo enviar el correo a {}: {}. Las credenciales han quedado registradas en el sistema.", toEmail, e.getMessage());
+            log.warn("No se pudo enviar el correo via Resend a {}: {}. Las credenciales han quedado registradas en el sistema.", toEmail, e.getMessage());
         }
     }
 
@@ -92,5 +112,31 @@ public class GmailSmtpEmailAdapter implements EmailSenderPort {
                 + "</div>"
                 + "</body>"
                 + "</html>";
+    }
+
+    // Escapa caracteres especiales para construccion manual de JSON
+    private String escapeJson(String value) {
+        if (value == null) return "";
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\b' -> sb.append("\\b");
+                case '\f' -> sb.append("\\f");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                default -> {
+                    if (c < 32) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        return sb.toString();
     }
 }

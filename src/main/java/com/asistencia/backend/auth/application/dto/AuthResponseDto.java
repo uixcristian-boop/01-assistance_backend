@@ -19,4 +19,5 @@ public class AuthResponseDto {
     private String role;
     private String profilePicture;
     private String message;
+    private String temporaryPassword;
 }

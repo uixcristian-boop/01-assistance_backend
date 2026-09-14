@@ -128,6 +128,7 @@ public class AuthApplicationService implements AuthUseCase {
                 .fullName(savedUser.getFullName())
                 .email(savedUser.getEmail())
                 .role(savedUser.getRole().name())
+                .temporaryPassword(generatedPassword)
                 .message("Profesor registrado exitosamente. Las credenciales fueron enviadas a su correo.")
                 .build();
     }

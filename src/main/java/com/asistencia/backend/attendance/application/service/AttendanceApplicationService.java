@@ -25,6 +25,7 @@ import java.time.Duration;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -37,6 +38,8 @@ import java.util.stream.Collectors;
 @Service
 @RequiredArgsConstructor
 public class AttendanceApplicationService implements AttendanceUseCase {
+
+    private static final ZoneId PERU_ZONE = ZoneId.of("America/Lima");
 
     private final AttendanceRepositoryPort attendanceRepositoryPort;
     private final CourseRepositoryPort courseRepositoryPort;
@@ -64,14 +67,14 @@ public class AttendanceApplicationService implements AttendanceUseCase {
 
         AttendanceSession session = AttendanceSession.builder()
                 .courseId(courseId)
-                .sessionDate(LocalDate.now())
+                .sessionDate(LocalDate.now(PERU_ZONE))
                 .startTime(request.getStartTime())
                 .endTime(request.getEndTime())
                 .toleranceMinutes(tolerance)
                 .lateThresholdMinutes(lateThreshold)
                 .sessionToken(sessionToken)
                 .active(true)
-                .createdAt(LocalDateTime.now())
+                .createdAt(LocalDateTime.now(PERU_ZONE))
                 .build();
 
         AttendanceSession saved = attendanceRepositoryPort.saveSession(session);
@@ -208,14 +211,9 @@ public class AttendanceApplicationService implements AttendanceUseCase {
             return mapRecordToDto(existingRecord.get(), student);
         }
 
-        LocalTime now = LocalTime.now();
+        LocalTime now = LocalTime.now(PERU_ZONE);
         LocalTime classStart = session.getStartTime();
         LocalTime classEnd = session.getEndTime();
-
-        // Validacion de limite de horario de clase
-        if (now.isAfter(classEnd)) {
-            throw new IllegalArgumentException("El horario de la clase ya ha culminado (" + classEnd + ")");
-        }
 
         // Calculo de tiempo transcurrido desde el inicio de la clase
         long minutesFromStart = 0;
@@ -224,12 +222,12 @@ public class AttendanceApplicationService implements AttendanceUseCase {
         }
 
         AttendanceStatus computedStatus;
-        if (minutesFromStart <= session.getToleranceMinutes()) {
-            computedStatus = AttendanceStatus.PRESENTE;
-        } else if (minutesFromStart <= session.getLateThresholdMinutes()) {
+        if (now.isAfter(classEnd)) {
+            // Si el horario de clase ya culmino pero el profesor mantiene la sesion activa, se admite como tardanza
             computedStatus = AttendanceStatus.TARDANZA;
+        } else if (minutesFromStart <= session.getToleranceMinutes()) {
+            computedStatus = AttendanceStatus.PRESENTE;
         } else {
-            // Pasado el umbral maximo de tardanza
             computedStatus = AttendanceStatus.TARDANZA;
         }
 
@@ -237,10 +235,10 @@ public class AttendanceApplicationService implements AttendanceUseCase {
                 .sessionId(session.getId())
                 .studentId(student.getId())
                 .status(computedStatus)
-                .checkInTime(LocalDateTime.now())
+                .checkInTime(LocalDateTime.now(PERU_ZONE))
                 .confidenceScore(request.getConfidenceScore())
                 .capturePhotoUrl(request.getCapturePhotoUrl())
-                .createdAt(LocalDateTime.now())
+                .createdAt(LocalDateTime.now(PERU_ZONE))
                 .build();
 
         AttendanceRecord saved = attendanceRepositoryPort.saveRecord(record);

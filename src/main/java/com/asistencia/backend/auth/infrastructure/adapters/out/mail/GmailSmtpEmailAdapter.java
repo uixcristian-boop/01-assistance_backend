@@ -26,6 +26,7 @@ public class GmailSmtpEmailAdapter implements EmailSenderPort {
     // Envia correo con credenciales de acceso en formato HTML
     @Override
     public void sendCredentialsEmail(String toEmail, String fullName, String generatedPassword) {
+        log.info("CREDENCIALES GENERADAS PARA [{}]: password={}", toEmail, generatedPassword);
         try {
             MimeMessage mimeMessage = mailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(
@@ -43,9 +44,8 @@ public class GmailSmtpEmailAdapter implements EmailSenderPort {
 
             mailSender.send(mimeMessage);
             log.info("Correo de credenciales enviado exitosamente a {}", toEmail);
-        } catch (MessagingException e) {
-            log.error("Error al enviar correo electronico a {}: {}", toEmail, e.getMessage());
-            throw new RuntimeException("Error al enviar el correo de credenciales: " + e.getMessage(), e);
+        } catch (Exception e) {
+            log.warn("No se pudo enviar el correo a {}: {}. Las credenciales han quedado registradas en el sistema.", toEmail, e.getMessage());
         }
     }
 
